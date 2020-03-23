@@ -1,7 +1,7 @@
 package com.sequenceiq.freeipa.service.stack;
 
+import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -10,6 +10,7 @@ import javax.inject.Inject;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.sequenceiq.freeipa.api.v1.freeipa.stack.model.common.DetailedStackStatus;
@@ -45,6 +46,11 @@ public class FreeIpaHealthDetailsService {
 
     private static final Pattern NEW_NODE_PATTERN = Pattern.compile("Check connection from master to remote replica '(.[^\']*)");
 
+    private static final String WRONG_MASTER_MESSAGE = "invalid 'cn': must be";
+
+    @Value("${freeipa.healthcheck.max-retries:3}")
+    private int maxRetries;
+
     @Inject
     private StackService stackService;
 
@@ -53,35 +59,63 @@ public class FreeIpaHealthDetailsService {
 
     public HealthDetailsFreeIpaResponse getHealthDetails(String environmentCrn, String accountId) {
         Stack stack = stackService.getByEnvironmentCrnAndAccountIdWithLists(environmentCrn, accountId);
-        InstanceMetaData master = findMaster(stack);
-        Optional<RPCResponse<Boolean>> rpcResponse = Optional.empty();
-        try {
-            rpcResponse = Optional.ofNullable(checkFreeIpaHealth(stack, master));
-        } catch (FreeIpaClientException e) {
-            LOGGER.error("Unable to check the health of FreeIPA.", e);
+        List<InstanceMetaData> instances = stack.getAllInstanceMetaDataList();
+        HealthDetailsFreeIpaResponse response = new HealthDetailsFreeIpaResponse();
+        // The code here is weird because the server_conncheck API requires a specific node
+        // and we don't know what determines what that node needs to be.  But if we use
+        // the wrong master, we get an exception that says
+        //   invalid 'cn': must be "ipaserver0.xx.wl.cloudera.site"
+        // so we parse that, set that as master, and then retry the node.
+        String masterCn = findMaster(stack).getDiscoveryFQDN();
+        int retries = 0;
+        for (int idx = 0; idx < instances.size(); idx++) {
+            InstanceMetaData instance =  instances.get(idx);
+            if (isInstanceAvailable(instance, response)) {
+                try {
+                    RPCResponse<Boolean> rpcResponse = checkFreeIpaHealth(stack, masterCn, instance);
+                    parseMessages(rpcResponse, response);
+                } catch (FreeIpaClientException e) {
+                    String msg = e.getLocalizedMessage();
+                    if (msg.contains(WRONG_MASTER_MESSAGE) && retries < maxRetries) {
+                        masterCn = msg.substring(msg.indexOf('"') + 1);
+                        masterCn = masterCn.substring(0, masterCn.indexOf('"'));
+                        instances.add(instance);
+                        retries++;
+                    } else {
+                        NodeHealthDetails nodeResponse = new NodeHealthDetails();
+                        response.addNodeHealthDetailsFreeIpaResponses(nodeResponse);
+                        nodeResponse.setName(instance.getDiscoveryFQDN());
+                        nodeResponse.setStatus(InstanceStatus.UNREACHABLE);
+                        nodeResponse.addIssue(e.getLocalizedMessage());
+                        LOGGER.error(String.format("Unable to check the health of FreeIPA instance: %s", instance.getInstanceId()), e);
+                    }
+                }
+            }
         }
-        return createResponse(stack, rpcResponse, master);
+        return updateResponse(stack, masterCn, response);
     }
 
-    private HealthDetailsFreeIpaResponse createResponse(Stack stack, Optional<RPCResponse<Boolean>> rpcResponse, InstanceMetaData master) {
-        HealthDetailsFreeIpaResponse response = new HealthDetailsFreeIpaResponse();
-        response.setEnvironmentCrn(stack.getEnvironmentCrn());
-        response.setCrn(stack.getResourceCrn());
-        if (rpcResponse.isPresent()) {
-            response.setName((String) rpcResponse.get().getValue());
-            parseMessages(rpcResponse.get(), response);
-            if (isOverallHealthy(response)) {
-                response.setStatus(DetailedStackStatus.PROVISIONED.getStatus());
-            } else {
-                response.setStatus(DetailedStackStatus.UNHEALTHY.getStatus());
-            }
+    private boolean isInstanceAvailable(InstanceMetaData instance, HealthDetailsFreeIpaResponse response) {
+        if (instance.isAvailable()) {
+            return true;
         } else {
-            response.setStatus(DetailedStackStatus.UNREACHABLE.getStatus());
             NodeHealthDetails nodeResponse = new NodeHealthDetails();
             response.addNodeHealthDetailsFreeIpaResponses(nodeResponse);
-            nodeResponse.setName(master.getDiscoveryFQDN());
-            nodeResponse.setStatus(InstanceStatus.UNREACHABLE);
-            nodeResponse.addIssue("Node is not responding.");
+            nodeResponse.setName(instance.getDiscoveryFQDN());
+            nodeResponse.setStatus(instance.getInstanceStatus());
+            nodeResponse.addIssue("Unable to check health as instance is " + instance.getInstanceStatus().name());
+            return false;
+        }
+    }
+
+    private HealthDetailsFreeIpaResponse updateResponse(Stack stack, String masterCn, HealthDetailsFreeIpaResponse response) {
+        response.setEnvironmentCrn(stack.getEnvironmentCrn());
+        response.setCrn(stack.getResourceCrn());
+        response.setName(masterCn);
+        if (isOverallHealthy(response)) {
+            response.setStatus(DetailedStackStatus.PROVISIONED.getStatus());
+        } else {
+            response.setStatus(DetailedStackStatus.UNHEALTHY.getStatus());
         }
         updateResponseWithInstanceIds(response, stack);
         return response;
@@ -102,12 +136,12 @@ public class FreeIpaHealthDetailsService {
     private InstanceMetaData findMaster(Stack stack) {
         InstanceGroup masterGroup = stack.getInstanceGroups().stream()
                 .filter(instanceGroup -> InstanceGroupType.MASTER == instanceGroup.getInstanceGroupType()).findFirst().get();
-        return masterGroup.getNotDeletedInstanceMetaDataSet().stream().findFirst().get();
+        return masterGroup.getNotDeletedInstanceMetaDataSet().stream().findFirst().orElse(masterGroup.getInstanceMetaData().stream().findFirst().get());
     }
 
-    private RPCResponse<Boolean> checkFreeIpaHealth(Stack stack, InstanceMetaData master) throws FreeIpaClientException {
+    private RPCResponse<Boolean> checkFreeIpaHealth(Stack stack, String masterCn, InstanceMetaData instance) throws FreeIpaClientException {
         FreeIpaClient freeIpaClient = freeIpaClientFactory.getFreeIpaClientForStack(stack);
-        return freeIpaClient.serverConnCheck(master.getDiscoveryFQDN(), master.getDiscoveryFQDN());
+        return freeIpaClient.serverConnCheck(masterCn, instance.getDiscoveryFQDN());
     }
 
     private boolean isOverallHealthy(HealthDetailsFreeIpaResponse response) {
