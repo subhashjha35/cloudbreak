@@ -1,0 +1,23 @@
+plugins {
+  id "java"
+}
+
+repositories {
+  mavenCentral()
+}
+
+configurations.all {
+  resolutionStrategy {
+    force group: "org.ow2.asm", name: "asm", version: asmVersion
+  }
+}
+
+dependencies {
+  implementation project(":authorization-common")
+  implementation project(":environment-api")
+  implementation project(":secret-engine")
+
+//  implementation group: 'javax.inject', name: 'javax.inject', version: '1'
+ // implementation group: "org.springframework.boot", name: "spring-boot-starter", version: springBootVersion
+//  implementation group: "org.springframework.boot", name: "spring-boot-starter-web", version: springBootVersion
+}

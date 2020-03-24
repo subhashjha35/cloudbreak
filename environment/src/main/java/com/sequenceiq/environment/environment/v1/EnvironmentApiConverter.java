@@ -141,7 +141,8 @@ public class EnvironmentApiConverter {
                         .withTunnel(tunnelConverter.convert(request.getTunnel()))
                         .build())
                 .withParameters(getIfNotNull(request.getAws(), this::awsParamsToParametersDto))
-                .withParentEnvironmentName(request.getParentEnvironmentName());
+                .withParentEnvironmentName(request.getParentEnvironmentName())
+                .withProxyConfigName(request.getProxyConfigName());
 
         NullUtil.doIfNotNull(request.getNetwork(), network -> builder.withNetwork(networkRequestToDto(network)));
         NullUtil.doIfNotNull(request.getSecurityAccess(), securityAccess -> builder.withSecurityAccess(securityAccessRequestToDto(securityAccess)));

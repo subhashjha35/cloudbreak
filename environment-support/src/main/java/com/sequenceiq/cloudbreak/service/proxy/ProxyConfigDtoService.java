@@ -1,5 +1,6 @@
 package com.sequenceiq.cloudbreak.service.proxy;
 
+import java.util.Optional;
 import java.util.function.Function;
 
 import javax.inject.Inject;
@@ -35,6 +36,14 @@ public class ProxyConfigDtoService {
 
     public ProxyConfig getByCrn(String resourceCrn) {
         return convert(getProxyConfig(resourceCrn, proxyEndpoint::getByResourceCrn));
+    }
+
+    public Optional<ProxyConfig> getByEnvironmentCrn(String environmentCrn) {
+        try {
+            return Optional.of(convert(proxyEndpoint.getByEnvironmentCrn(environmentCrn)));
+        } catch (RuntimeException rex) {
+            return Optional.empty();
+        }
     }
 
     private ProxyConfig convert(ProxyResponse proxyResponse) {

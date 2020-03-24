@@ -72,6 +72,8 @@ public class EnvironmentModelDescription {
     public static final String PARENT_ENVIRONMENT_NAME = "Parent environment name";
     public static final String PARENT_ENVIRONMENT_CLOUD_PLATFORM = "Parent environment cloud platform";
 
+    public static final String PROXYCONFIG_NAME = "Name of the proxyconfig of the environment.";
+
     private EnvironmentModelDescription() {
     }
 }

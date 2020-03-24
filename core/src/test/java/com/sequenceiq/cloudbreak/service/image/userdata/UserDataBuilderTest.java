@@ -66,7 +66,7 @@ public class UserDataBuilderTest {
         String expectedCoreScript = FileReaderUtils.readFileFromClasspath("azure-core-init.sh");
         // JSA todo add test for CCM parameters
         Map<InstanceGroupType, String> userdata = underTest.buildUserData(Platform.platform("AZURE"), "priv-key".getBytes(),
-            "cloudbreak", getPlatformParameters(), "pass", "cert", null);
+            "cloudbreak", getPlatformParameters(), "pass", "cert", null, null);
         Assert.assertEquals(expectedGwScript, userdata.get(InstanceGroupType.GATEWAY));
         Assert.assertEquals(expectedCoreScript, userdata.get(InstanceGroupType.CORE));
     }

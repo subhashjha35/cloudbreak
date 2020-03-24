@@ -45,6 +45,7 @@ import com.sequenceiq.environment.network.NetworkService;
 import com.sequenceiq.environment.network.dao.domain.AwsNetwork;
 import com.sequenceiq.environment.network.dao.domain.BaseNetwork;
 import com.sequenceiq.environment.network.dto.NetworkDto;
+import com.sequenceiq.environment.proxy.service.ProxyConfigService;
 
 @ExtendWith(SpringExtension.class)
 class EnvironmentResourceServiceTest {
@@ -55,9 +56,6 @@ class EnvironmentResourceServiceTest {
     @MockBean
     private NetworkService networkService;
 
-    @Inject
-    private EnvironmentResourceService environmentResourceServiceUnderTest;
-
     @MockBean
     private CloudPlatformConnectors cloudPlatformConnectors;
 
@@ -66,6 +64,12 @@ class EnvironmentResourceServiceTest {
 
     @MockBean
     private Clock clock;
+
+    @MockBean
+    private ProxyConfigService proxyConfigService;
+
+    @Inject
+    private EnvironmentResourceService environmentResourceServiceUnderTest;
 
     private CredentialAwareEnvRequest request;
 
