@@ -33,6 +33,15 @@ public abstract class ImageValidatorE2ETest extends AbstractE2ETest {
     @Value("${integrationtest.imageValidation.sourceCatalogUrl}")
     private String sourceImageCatalogUrl;
 
+    @Override
+    protected void setupTest(TestContext testContext) {
+        testContext.getCloudProvider().getCloudFunctionality().cloudStorageInitialize();
+        createDefaultUser(testContext);
+        createDefaultCredential(testContext);
+        createEnvironmentWithNetworkAndFreeIPA(testContext);
+        initializeDefaultBlueprints(testContext);
+    }
+
     @BeforeMethod
     public void createSourceCatalogIfNotExists(Object[] data) {
         TestContext testContext = (TestContext) data[0];
