@@ -10,11 +10,13 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 
+import javax.annotation.PostConstruct;
 import javax.inject.Inject;
 
 import org.apache.commons.lang3.tuple.Pair;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import com.cloudera.api.swagger.model.ApiClusterTemplateConfig;
@@ -23,6 +25,7 @@ import com.cloudera.api.swagger.model.ApiClusterTemplateInstantiator;
 import com.cloudera.api.swagger.model.ApiClusterTemplateRoleConfigGroup;
 import com.cloudera.api.swagger.model.ApiClusterTemplateRoleConfigGroupInfo;
 import com.cloudera.api.swagger.model.ApiClusterTemplateService;
+import com.google.common.annotations.VisibleForTesting;
 import com.sequenceiq.cloudbreak.template.TemplatePreparationObject;
 import com.sequenceiq.cloudbreak.template.model.ServiceComponent;
 import com.sequenceiq.cloudbreak.template.views.HostgroupView;
@@ -35,6 +38,23 @@ public class CmHostGroupRoleConfigProviderProcessor {
     @Inject
     private List<CmHostGroupRoleConfigProvider> providers;
 
+    @Value("#{'${cb.cm.sharedComponents:}'.split(';')}")
+    private List<String> sharedComponentsList;
+
+    private Map<String, String> sharedComponents = new HashMap<>();
+
+    @PostConstruct
+    private void parseSharedComponents() {
+        sharedComponentsList.forEach(s -> {
+            try {
+                String[] split = s.split("=");
+                sharedComponents.put(split[0].trim(), split[1].trim());
+            } catch (Exception e) {
+                LOGGER.warn("Cannot parse shared component: {}. Message: {}", s, e.getMessage());
+            }
+        });
+    }
+
     public void process(CmTemplateProcessor templateProcessor, TemplatePreparationObject source) {
         if (!getHostTemplates(templateProcessor).isEmpty()) {
             updateConfigsInTemplate(templateProcessor, generateConfigs(templateProcessor, source));
@@ -45,11 +65,10 @@ public class CmHostGroupRoleConfigProviderProcessor {
         return ofNullable(templateProcessor.getTemplate().getHostTemplates()).orElseGet(List::of);
     }
 
-    private Map<String, Map<String, List<ApiClusterTemplateConfig>>> generateConfigs(CmTemplateProcessor templateProcessor, TemplatePreparationObject source) {
+    @VisibleForTesting
+    Map<String, Map<String, List<ApiClusterTemplateConfig>>> generateConfigs(CmTemplateProcessor templateProcessor, TemplatePreparationObject source) {
         Map<String, Map<String, List<ApiClusterTemplateConfig>>> configsByRoleConfigGroup = new HashMap<>();
-
-        Map<String, HostgroupView> hostGroups = source.getHostgroupViews().stream()
-                .collect(toMap(HostgroupView::getName, Function.identity()));
+        Map<String, HostgroupView> hostGroups = source.getHostgroupViews().stream().collect(toMap(HostgroupView::getName, Function.identity()));
         List<ApiClusterTemplateHostTemplate> hostTemplates = getHostTemplates(templateProcessor);
         Map<String, ServiceComponent> serviceComponents = templateProcessor.mapRoleRefsToServiceComponents();
 
@@ -57,23 +76,29 @@ public class CmHostGroupRoleConfigProviderProcessor {
             String hostGroupName = hostTemplate.getRefName();
             List<String> roleConfigGroups = ofNullable(hostTemplate.getRoleConfigGroupsRefNames()).orElseGet(List::of);
             HostgroupView hostgroupView = hostGroups.get(hostGroupName);
+            groupByHostGroupName(source, configsByRoleConfigGroup, serviceComponents, hostGroupName, roleConfigGroups, hostgroupView);
+        }
+        return configsByRoleConfigGroup;
+    }
 
-            for (String roleConfigGroup : roleConfigGroups) {
-                for (CmHostGroupRoleConfigProvider provider : providers) {
-                    ServiceComponent serviceComponent = serviceComponents.get(roleConfigGroup);
-
-                    if (serviceComponent != null
-                            && Objects.equals(provider.getServiceType(), serviceComponent.getService())
-                            && provider.getRoleTypes().contains(serviceComponent.getComponent())) {
-
-                        configsByRoleConfigGroup.computeIfAbsent(roleConfigGroup, __ -> new HashMap<>())
-                                .computeIfAbsent(hostGroupName, __ -> new ArrayList<>())
-                                .addAll(provider.getRoleConfigs(serviceComponent.getComponent(), hostgroupView, source));
-                    }
+    private void groupByHostGroupName(TemplatePreparationObject source, Map<String, Map<String, List<ApiClusterTemplateConfig>>> configsByRoleConfigGroup,
+            Map<String, ServiceComponent> serviceComponents, String hostGroupName, List<String> roleConfigGroups, HostgroupView hostgroupView) {
+        for (String roleConfigGroup : roleConfigGroups) {
+            for (CmHostGroupRoleConfigProvider provider : providers) {
+                ServiceComponent serviceComponent = serviceComponents.get(roleConfigGroup);
+                if (serviceComponent != null
+                        && isSameByServiceTypeAndRoleType(provider, serviceComponent)
+                        && !serviceComponent.getComponent().equals(sharedComponents.get(serviceComponent.getService()))) {
+                    Map<String, List<ApiClusterTemplateConfig>> configs = configsByRoleConfigGroup.computeIfAbsent(roleConfigGroup, __ -> new HashMap<>());
+                    configs.computeIfAbsent(hostGroupName, __ -> new ArrayList<>())
+                            .addAll(provider.getRoleConfigs(serviceComponent.getComponent(), hostgroupView, source));
                 }
             }
         }
-        return configsByRoleConfigGroup;
+    }
+
+    private boolean isSameByServiceTypeAndRoleType(CmHostGroupRoleConfigProvider provider, ServiceComponent serviceComponent) {
+        return Objects.equals(provider.getServiceType(), serviceComponent.getService()) && provider.getRoleTypes().contains(serviceComponent.getComponent());
     }
 
     private void updateConfigsInTemplate(CmTemplateProcessor templateProcessor, Map<String, Map<String, List<ApiClusterTemplateConfig>>> newConfigsByRCG) {

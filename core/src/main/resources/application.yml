@@ -323,6 +323,8 @@ cb:
     user.role: "ROLE_USER"
     heartbeat.interval: 3
     missed.heartbeat.interval: 30
+    sharedComponents: >
+      HDFS=JOURNALNODE
 
   clouderamanager:
     entries:
